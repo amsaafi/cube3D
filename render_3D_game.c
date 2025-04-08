@@ -1,0 +1,189 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   render_3D_game.c                                   :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: mlahrach <mlahrach@student.42.fr>          +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2025/03/22 20:10:53 by mlahrach          #+#    #+#             */
+/*   Updated: 2025/04/07 15:53:38 by mlahrach         ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
+#include "raycasting.h"
+
+void	draw_ceiling(t_game *game, int start_y, int end_y, int ray_index,
+		int color)
+{
+	int	wall_strip_width;
+	int	pixel;
+	int	y;
+
+	wall_strip_width = SCREEN_WIDTH / (NUM_RAYS);
+	y = start_y;
+	while (y < end_y)
+	{
+		pixel = (y * game->size_line) + (ray_index * wall_strip_width
+				* (game->bpp / 8));
+		game->img_data[pixel] = color & 0xFF;
+		game->img_data[pixel + 1] = (color >> 8) & 0xFF;
+		game->img_data[pixel + 2] = (color >> 16) & 0xFF;
+		y++;
+	}
+}
+
+int	get_wall_color(t_ray ray)
+{
+	if (ray.was_hit_vertical)
+	{
+		if (ray.is_facing_left)
+			return (0xFF0000);
+		else
+			return (0x8B4513);
+	}
+	else
+	{
+		if (ray.is_facing_up)
+			return (0x00FF00);
+		else
+			return (0xFFFF00);
+	}
+}
+
+int get_texture_index(t_ray *ray)
+{
+    if (ray->was_hit_vertical)
+    {
+        if (ray->is_facing_left)
+            return (2); // 2 = West
+        else
+            return (3); // 3 = East
+    }
+    else
+    {
+        if (ray->is_facing_up)
+            return (0); // 0 = North
+        else
+            return (1); // 1 = South
+    }
+}
+
+int     get_texture_x_coord(t_ray *ray, int tex_width)
+{
+    int tex_x;
+    
+    if (ray->was_hit_vertical)
+    {
+        tex_x = (int)ray->wall_hit_y % TILE_SIZE;
+        if (ray->is_facing_left)
+            tex_x = tex_width - tex_x - 1;
+    }
+    else
+    {
+        tex_x = (int)ray->wall_hit_x % TILE_SIZE;
+        if (ray->is_facing_up)
+            tex_x = tex_width - tex_x - 1;
+    }
+    
+    return (tex_x);
+}
+
+float   get_texture_start_position(int wall_top, int true_wall_height, float tex_step)
+{
+    float tex_pos;
+    
+    tex_pos = 0;
+    if (wall_top <= 0)
+    {
+        int screen_center = SCREEN_HEIGHT / 2;
+        int half_wall_height = true_wall_height / 2;
+        int offset = screen_center - half_wall_height;
+        
+        if (offset < 0)
+            tex_pos = abs(offset) * tex_step;
+    }
+    
+    return (tex_pos);
+}
+
+void initialize_draw_info(t_draw_info *info, t_game *game, int wall_top, int ray_index)
+{
+    info->ray = &game->rays[ray_index];
+    info->tex_index = get_texture_index(info->ray);
+    info->texture = game->tex_data[info->tex_index];
+    info->tex_width = game->tex_width[info->tex_index];
+    info->tex_height = game->tex_height[info->tex_index];
+    info->wall_strip_width = WALL_STRIP_WIDTH;
+    info->tex_x = get_texture_x_coord(info->ray, info->tex_width);
+    info->true_wall_height = (int)((TILE_SIZE / (info->ray->distance * cos(info->ray->ray_angle - game->player.rotation_angle))) * DIST_PROJ_PLANE);
+    info->tex_step = (float)info->tex_height / (float)info->true_wall_height;
+    info->tex_pos = get_texture_start_position(wall_top, info->true_wall_height, info->tex_step);
+}
+
+void draw_wall_strip(t_game *game, int wall_top, int wall_bottom, int ray_index)
+{
+    int         y;
+    t_draw_info info;
+    
+    initialize_draw_info(&info, game, wall_top, ray_index);
+    y = wall_top;
+
+    while (y < wall_bottom)
+    {
+        info.tex_y = (int)info.tex_pos & (info.tex_height - 1);
+        info.tex_pos += info.tex_step;
+        info.color = info.texture[info.tex_y * info.tex_width + info.tex_x];
+        info.pixel = (y * game->size_line) + (ray_index * info.wall_strip_width * (game->bpp / 8));
+
+        game->img_data[info.pixel] = info.color & 0xFF;
+        game->img_data[info.pixel + 1] = (info.color >> 8) & 0xFF;
+        game->img_data[info.pixel + 2] = (info.color >> 16) & 0xFF;
+        y++;
+    }
+}
+
+
+void	draw_floor(t_game *game, int start_y, int end_y, int ray_index,
+		int color)
+{
+	int	wall_strip_width;
+	int	pixel;
+	int	y;
+
+	wall_strip_width = WALL_STRIP_WIDTH;
+	y = start_y;
+	while (y < end_y)
+	{
+		pixel = (y * game->size_line) + (ray_index * wall_strip_width
+				* (game->bpp / 8));
+		game->img_data[pixel] = color & 0xFF;
+		game->img_data[pixel + 1] = (color >> 8) & 0xFF;
+		game->img_data[pixel + 2] = (color >> 16) & 0xFF;
+		y++;
+	}
+}
+
+void render_game_in_3d(t_game *game)
+{
+    t_ray ray;
+    float correct_distance;
+    int wall_strip_height;
+    int wall_top_pixel;
+    int wall_bottom_pixel;
+    
+    for (int i = 0; i < NUM_RAYS; i++)
+    {
+        ray = game->rays[i];
+        correct_distance = ray.distance * cos(ray.ray_angle - game->player.rotation_angle);
+        wall_strip_height = (int)((TILE_SIZE / correct_distance) * DIST_PROJ_PLANE);
+        wall_top_pixel = (SCREEN_HEIGHT / 2) - (wall_strip_height / 2);
+        if (wall_top_pixel < 0)
+            wall_top_pixel = 0;
+        wall_bottom_pixel = (SCREEN_HEIGHT / 2) + (wall_strip_height / 2);
+        if (wall_bottom_pixel > SCREEN_HEIGHT)
+            wall_bottom_pixel = SCREEN_HEIGHT;
+        draw_ceiling(game, 0, wall_top_pixel, i, game->ceiling_color);
+        draw_wall_strip(game, wall_top_pixel, wall_bottom_pixel, i);
+        draw_floor(game, wall_bottom_pixel, SCREEN_HEIGHT, i, game->floor_color);
+    }
+}
